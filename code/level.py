@@ -38,11 +38,11 @@ class Level:
 		self.menu = Menu(self.player, self.toggle_shop)
 		self.shop_active = False
 
-		# music - ALL SOUNDS DISABLED
-		# self.success = pygame.mixer.Sound('../audio/success.wav')
-		# self.success.set_volume(0.3)
-		# Music disabled - self.music = pygame.mixer.Sound('../audio/music.mp3')
-		# self.music.play(loops = -1)
+		# music
+		self.success = pygame.mixer.Sound('../audio/success.wav')
+		self.success.set_volume(0.3)
+		self.music = pygame.mixer.Sound('../audio/music.mp3')
+		self.music.play(loops = -1)
 
 	def setup(self):
 		tmx_data = load_pygame('../data/map.tmx')
@@ -110,7 +110,7 @@ class Level:
 	def player_add(self,item):
 
 		self.player.item_inventory[item] += 1
-		# Sound disabled - self.success.play()
+		self.success.play()
 
 	def toggle_shop(self):
 
@@ -155,9 +155,6 @@ class Level:
 		if self.shop_active:
 			self.menu.update()
 		else:
-			# Store display surface for AI agent
-			if hasattr(self.player, 'ai_controlled') and self.player.ai_controlled:
-				self.player.display_surface = self.display_surface
 			self.all_sprites.update(dt)
 			self.plant_collision()
 
@@ -169,99 +166,21 @@ class Level:
 
 		# transition overlay
 		if self.player.sleep:
-			# Sound disabled - self.transition.play()
-			pass
+			self.transition.play()
 
 class CameraGroup(pygame.sprite.Group):
 	def __init__(self):
 		super().__init__()
 		self.display_surface = pygame.display.get_surface()
 		self.offset = pygame.math.Vector2()
-		self.free_cam_mode = True  # Free camera enabled by default
-		self.dragging = False
-		self.drag_start_pos = pygame.math.Vector2()
-		self.drag_camera_start = pygame.math.Vector2()
-		
-		# Zoom settings
-		self.zoom_scale = 1.0
-		self.min_zoom = 0.3  # Can zoom out to see 3x more
-		self.max_zoom = 2.0  # Can zoom in to see 2x closer
-		self.zoom_speed = 0.1  # Zoom increment per scroll
 
-	def handle_scroll(self, scroll_y, mouse_pos=None):
-		"""Handle mouse wheel scroll for zoom"""
-		# scroll_y > 0 means scroll up (zoom in), < 0 means scroll down (zoom out)
-		old_zoom = self.zoom_scale
-		
-		if scroll_y > 0:
-			self.zoom_scale = min(self.zoom_scale + self.zoom_speed, self.max_zoom)
-		elif scroll_y < 0:
-			self.zoom_scale = max(self.zoom_scale - self.zoom_speed, self.min_zoom)
-		
-		# Adjust offset to zoom around mouse position (if provided) or screen center
-		if mouse_pos and self.zoom_scale != old_zoom:
-			mx, my = mouse_pos
-			zoom_factor = self.zoom_scale / old_zoom
-			# Adjust offset so mouse position stays in same screen location
-			self.offset.x = mx - (mx - self.offset.x) * zoom_factor
-			self.offset.y = my - (my - self.offset.y) * zoom_factor
-
-	def custom_draw(self, player=None):
-		# Handle mouse dragging for free camera
-		mouse_pos = pygame.math.Vector2(pygame.mouse.get_pos())
-		mouse_buttons = pygame.mouse.get_pressed()
-		
-		if self.free_cam_mode:
-			if mouse_buttons[0]:  # Left mouse button
-				if not self.dragging:
-					self.dragging = True
-					self.drag_start_pos = mouse_pos.copy()
-					self.drag_camera_start = self.offset.copy()
-				else:
-					# Calculate drag delta and update camera offset
-					delta = mouse_pos - self.drag_start_pos
-					self.offset = self.drag_camera_start - delta
-			else:
-				self.dragging = False
-		else:
-			# Follow player (original behavior) - only if player exists
-			if player:
-				self.offset.x = player.rect.centerx - SCREEN_WIDTH / 2
-				self.offset.y = player.rect.centery - SCREEN_HEIGHT / 2
-			self.dragging = False
-
-		# Apply zoom: adjust offset to zoom around center of screen
-		center_x = SCREEN_WIDTH / 2
-		center_y = SCREEN_HEIGHT / 2
-		zoom_offset_x = (center_x - center_x * self.zoom_scale)
-		zoom_offset_y = (center_y - center_y * self.zoom_scale)
+	def custom_draw(self, player):
+		self.offset.x = player.rect.centerx - SCREEN_WIDTH / 2
+		self.offset.y = player.rect.centery - SCREEN_HEIGHT / 2
 
 		for layer in LAYERS.values():
 			for sprite in sorted(self.sprites(), key = lambda sprite: sprite.rect.centery):
 				if sprite.z == layer:
 					offset_rect = sprite.rect.copy()
 					offset_rect.center -= self.offset
-					
-					# Apply zoom
-					offset_rect.center = (
-						(offset_rect.centerx - center_x) * self.zoom_scale + center_x + zoom_offset_x,
-						(offset_rect.centery - center_y) * self.zoom_scale + center_y + zoom_offset_y
-					)
-					offset_rect.width = int(sprite.rect.width * self.zoom_scale)
-					offset_rect.height = int(sprite.rect.height * self.zoom_scale)
-					
-					# Scale the image
-					if self.zoom_scale != 1.0:
-						scaled_image = pygame.transform.scale(sprite.image, (offset_rect.width, offset_rect.height))
-						self.display_surface.blit(scaled_image, offset_rect)
-					else:
-						self.display_surface.blit(sprite.image, offset_rect)
-
-					# # anaytics
-					# if sprite == player:
-					# 	pygame.draw.rect(self.display_surface,'red',offset_rect,5)
-					# 	hitbox_rect = player.hitbox.copy()
-					# 	hitbox_rect.center = offset_rect.center
-					# 	pygame.draw.rect(self.display_surface,'green',hitbox_rect,5)
-					# 	target_pos = offset_rect.center + PLAYER_TOOL_OFFSET[player.status.split('_')[0]]
-					# 	pygame.draw.circle(self.display_surface,'blue',target_pos,5)
+					self.display_surface.blit(sprite.image, offset_rect)

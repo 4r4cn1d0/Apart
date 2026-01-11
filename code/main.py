@@ -6,11 +6,7 @@ from ai_agent import AIAgent
 
 class Game:
 	def __init__(self, ai_mode=False, api_provider="openai", api_key=None):
-		# Initialize pygame WITHOUT mixer (no sounds)
 		pygame.init()
-		# Disable mixer completely - no sounds
-		if pygame.mixer.get_init() is not None:
-			pygame.mixer.quit()
 		self.screen = pygame.display.set_mode((SCREEN_WIDTH,SCREEN_HEIGHT))
 		pygame.display.set_caption('Sprout land - AI Controlled' if ai_mode else 'Sprout land')
 		self.clock = pygame.time.Clock()
