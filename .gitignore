@@ -1,0 +1,61 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Pygame
+*.pyc
+*.pyo
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Training logs and outputs (optional - comment out if you want to include)
+training_output/
+*.log
+silent_training.log
+training_visible.log
+training_run.log
+
+# Memory files (optional - comment out if you want to include)
+agent_memory.json
+
+# Checkpoints (optional)
+checkpoint_*.json
+training_metrics_*.json
+
+# Audio (optional - if you want to exclude)
+audio/*.mp3
+audio/*.wav
+
+# Temporary files
+*.tmp
+*.bak
