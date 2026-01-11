@@ -160,8 +160,8 @@ def train(
         progress_bar=True
     )
     
-    # Save final model
-    final_model_path = os.path.join(save_dir, "ppo_sproutland_final")
+    # Save final mode
+    final_model_path = os.path.join(save_dir, "ppo_sproutland_walk_pen")
     model.save(final_model_path)
     print(f"Training complete! Final model saved to: {final_model_path}")
     

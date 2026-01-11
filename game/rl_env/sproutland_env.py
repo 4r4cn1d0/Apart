@@ -77,13 +77,20 @@ class SproutLandEnv(gym.Env):
         # Reward configuration
         default_reward_config = {
             'step_penalty': -0.001,
-            'money_scale': 0.01,
+            'money_scale': 0.05,  # Increased from 0.02 - bigger reward for selling
             'spend_penalty_scale': 0.005,
-            'harvest_bonus': 0.25,
-            'till_success': 0.01,
-            'water_success': 0.01,
-            'plant_success': 0.01,
-            'invalid_action_penalty': -0.01
+            'harvest_bonus': 0.75,  # Increased from 0.5
+            'till_success': 0.15,  # Increased from 0.1
+            'water_success': 0.15,  # Increased from 0.1
+            'plant_success': 0.15,  # Increased from 0.1
+            'invalid_action_penalty': -0.01,
+            'repeat_action_penalty': -0.05,  # Penalty for repeating same action in same spot
+            'sequence_bonus': 0.5,  # Increased from 0.3 - bigger reward for correct sequences
+            'cycle_completion_bonus': 2.0,  # Increased from 1.0 - much bigger reward for completing cycle
+            'sell_bonus': 0.5,  # NEW: Bonus for selling crops
+            'cycle_count_bonus': 0.2,  # NEW: Bonus per cycle completed (scales with cycle count)
+            'stuck_penalty': -0.02,  # Penalty for being stuck (not moving position)
+            'repetitive_movement_penalty': -0.03  # Penalty for repeating same movement action many times
         }
         self.reward_config = {**default_reward_config, **(reward_config or {})}
         
@@ -143,6 +150,20 @@ class SproutLandEnv(gym.Env):
         self.events = []  # Event list for reward computation
         self.prev_day_count = 0
         
+        # Action tracking for penalties and sequence rewards
+        self.last_action_type = None  # 'till', 'water', 'plant', or None
+        self.last_action_tile = None  # (tile_x, tile_y) tuple
+        self.last_action_step = -1  # Step count when last action occurred
+        self.cycle_progress = []  # Track cycle progress: ['till', 'plant', 'water'] -> harvest completes cycle
+        self.cycles_completed = 0  # Track total cycles completed
+        self.last_harvest_step = -1  # Track when last harvest occurred
+        
+        # Movement tracking for stuck behavior detection
+        self.recent_moves = []  # Track last N movement actions
+        self.prev_player_pos = None  # Previous player position (tile coordinates)
+        self.same_move_count = 0  # Count of consecutive same movement actions
+        self.stuck_step_count = 0  # Count of steps without position change
+        
         # Agent controls
         self.agent_controls = AgentControls()
         
@@ -155,6 +176,20 @@ class SproutLandEnv(gym.Env):
         self.day_count = 0
         self.prev_day_count = 0
         self.events = []
+        
+        # Reset action tracking
+        self.last_action_type = None
+        self.last_action_tile = None
+        self.last_action_step = -1
+        self.cycle_progress = []
+        self.cycles_completed = 0
+        self.last_harvest_step = -1
+        
+        # Reset movement tracking
+        self.recent_moves = []
+        self.prev_player_pos = None
+        self.same_move_count = 0
+        self.stuck_step_count = 0
         
         # ADAPT THIS BLOCK: Create Level instance
         # The Level class needs to be modified to accept use_agent_controls parameter
@@ -185,6 +220,21 @@ class SproutLandEnv(gym.Env):
         """Execute one step in the environment"""
         # Parse action
         move_action, tool_action, seed_action, interact_action, menu_action = action
+        
+        # Track movement actions for stuck detection
+        # Only track non-noop movement actions (1=up, 2=down, 3=left, 4=right)
+        if move_action > 0:
+            if len(self.recent_moves) > 0 and self.recent_moves[-1] == move_action:
+                self.same_move_count += 1
+            else:
+                self.same_move_count = 1
+            # Keep only last 20 moves for tracking
+            self.recent_moves.append(move_action)
+            if len(self.recent_moves) > 20:
+                self.recent_moves.pop(0)
+        else:
+            # Reset count on noop
+            self.same_move_count = 0
         
         # Clear events from previous step
         self.events.clear()
@@ -377,33 +427,167 @@ class SproutLandEnv(gym.Env):
         
         return grid
     
+    def _get_target_tile(self) -> Optional[Tuple[int, int]]:
+        """Get the target tile coordinates based on player position and facing direction"""
+        try:
+            player = self.level.player
+            # Calculate target position (same as in player.get_target_pos())
+            from settings import PLAYER_TOOL_OFFSET
+            facing_dir = player.status.split('_')[0]
+            if facing_dir in PLAYER_TOOL_OFFSET:
+                target_pos = player.rect.center + PLAYER_TOOL_OFFSET[facing_dir]
+                tile_x = int(target_pos.x) // TILE_SIZE
+                tile_y = int(target_pos.y) // TILE_SIZE
+                return (tile_x, tile_y)
+        except:
+            pass
+        return None
+    
     def _compute_reward(self) -> float:
         """Compute reward based on events and state changes"""
         reward = 0.0
         
-        # Step penalty
-        reward += self.reward_config['step_penalty']
+        # Step penalty (reduced when actively farming)
+        base_step_penalty = self.reward_config['step_penalty']
+        # Reduce penalty if we're in the middle of a cycle
+        if len(self.cycle_progress) > 0:
+            base_step_penalty *= 0.5  # Half penalty during farming
+        reward += base_step_penalty
         
         # Money delta (profit)
         money_delta = self.level.player.money - self.prev_money
         reward += self.reward_config['money_scale'] * money_delta
         
+        # Bonus for selling crops (detected via money increase)
+        # Only give bonus if money increased and we recently harvested
+        if money_delta > 0:
+            # Check if this is likely a crop sale (corn=$10, tomato=$20)
+            # Give bonus if we sold crops recently after harvest
+            if (self.last_harvest_step >= 0 and 
+                self.step_count - self.last_harvest_step < 100):  # Sold within 100 steps of harvest
+                # Additional bonus for selling crops
+                if money_delta >= 10:  # Likely sold a crop
+                    reward += self.reward_config['sell_bonus']
+        
         # Spending penalty (optional)
         if money_delta < 0:
             reward += self.reward_config['spend_penalty_scale'] * abs(money_delta)
         
-        # Event-based rewards
+        # Penalty for repetitive movement (stuck in same direction)
+        if self.same_move_count >= 10:  # If same movement action repeated 10+ times
+            reward += self.reward_config['repetitive_movement_penalty']
+        
+        # Penalty for being stuck (not moving position)
+        try:
+            player = self.level.player
+            current_pos = (int(player.pos.x) // TILE_SIZE, int(player.pos.y) // TILE_SIZE)
+            if self.prev_player_pos is not None:
+                if current_pos == self.prev_player_pos:
+                    self.stuck_step_count += 1
+                    # If stuck for more than 20 steps, apply penalty
+                    if self.stuck_step_count > 20:
+                        reward += self.reward_config['stuck_penalty']
+                else:
+                    self.stuck_step_count = 0
+            self.prev_player_pos = current_pos
+        except:
+            pass
+        
+        # Event-based rewards with action tracking
         # ADAPT THIS BLOCK: Events should be populated by game code
         # See integration patches for player.py and level.py
         for event in self.events:
             if event == 'harvest':
                 reward += self.reward_config['harvest_bonus']
+                
+                # Check for cycle completion: till->plant->water->harvest
+                cycle_completed = False
+                if len(self.cycle_progress) >= 3:
+                    # Check if last 3 actions were till, plant, water (in any order but all present)
+                    recent_actions = self.cycle_progress[-3:]
+                    if set(recent_actions) == {'till', 'plant', 'water'}:
+                        reward += self.reward_config['cycle_completion_bonus']
+                        cycle_completed = True
+                        self.cycles_completed += 1
+                        # Bonus for completing multiple cycles (encourages more cycles)
+                        if self.cycles_completed > 0:
+                            reward += self.reward_config['cycle_count_bonus'] * min(self.cycles_completed, 10)
+                
+                # Reset action tracking after harvest (cycle complete)
+                self.last_action_type = None
+                self.last_action_tile = None
+                self.cycle_progress = []
+                self.last_harvest_step = self.step_count
             elif event == 'till_success':
                 reward += self.reward_config['till_success']
+                current_action_tile = self._get_target_tile()
+                
+                # Bonus for starting a new cycle after completing one
+                if (self.last_harvest_step >= 0 and 
+                    self.step_count - self.last_harvest_step < 200):  # Started new cycle soon after harvest
+                    reward += 0.1  # Small bonus for being proactive
+                
+                # Check for repeated action in same spot
+                if (self.last_action_type == 'till' and 
+                    current_action_tile and 
+                    current_action_tile == self.last_action_tile):
+                    reward += self.reward_config['repeat_action_penalty']
+                
+                # Update tracking
+                self.last_action_type = 'till'
+                self.last_action_tile = current_action_tile
+                self.last_action_step = self.step_count
+                self.cycle_progress.append('till')
+                # Keep only last 10 actions for cycle tracking
+                if len(self.cycle_progress) > 10:
+                    self.cycle_progress.pop(0)
+                
             elif event == 'water_success':
                 reward += self.reward_config['water_success']
+                current_action_tile = self._get_target_tile()
+                
+                # Check for repeated action in same spot
+                if (self.last_action_type == 'water' and 
+                    current_action_tile and 
+                    current_action_tile == self.last_action_tile):
+                    reward += self.reward_config['repeat_action_penalty']
+                
+                # Check for correct sequence (plant -> water is correct!)
+                if self.last_action_type == 'plant':
+                    reward += self.reward_config['sequence_bonus']
+                
+                # Update tracking
+                self.last_action_type = 'water'
+                self.last_action_tile = current_action_tile
+                self.last_action_step = self.step_count
+                self.cycle_progress.append('water')
+                # Keep only last 10 actions for cycle tracking
+                if len(self.cycle_progress) > 10:
+                    self.cycle_progress.pop(0)
+                
             elif event == 'plant_success':
                 reward += self.reward_config['plant_success']
+                current_action_tile = self._get_target_tile()
+                
+                # Check for repeated action in same spot
+                if (self.last_action_type == 'plant' and 
+                    current_action_tile and 
+                    current_action_tile == self.last_action_tile):
+                    reward += self.reward_config['repeat_action_penalty']
+                
+                # Check for correct sequence (till -> plant is correct!)
+                if self.last_action_type == 'till':
+                    reward += self.reward_config['sequence_bonus']
+                
+                # Update tracking
+                self.last_action_type = 'plant'
+                self.last_action_tile = current_action_tile
+                self.last_action_step = self.step_count
+                self.cycle_progress.append('plant')
+                # Keep only last 10 actions for cycle tracking
+                if len(self.cycle_progress) > 10:
+                    self.cycle_progress.pop(0)
+                
             elif event == 'invalid_action':
                 reward += self.reward_config['invalid_action_penalty']
         

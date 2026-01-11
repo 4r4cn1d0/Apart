@@ -75,7 +75,7 @@ def evaluate_model(
                 done = True
         
         # Get final stats
-        final_money = env.level.player.money
+        final_money = env.unwrapped.level.player.money
         final_day = info.get('day', 0)
         
         episode_rewards.append(episode_reward)
@@ -160,7 +160,7 @@ def run_single_episode(
             
             # Print periodic updates
             if step_count % 100 == 0:
-                money = env.level.player.money
+                money = env.unwrapped.level.player.money
                 day = info.get('day', 0)
                 print(f"Step {step_count}: Reward: {total_reward:.2f}, Money: ${money:.2f}, Day: {day}")
     
@@ -168,7 +168,7 @@ def run_single_episode(
         print("\nEpisode interrupted by user")
     
     # Final stats
-    final_money = env.level.player.money
+    final_money = env.unwrapped.level.player.money
     final_day = info.get('day', 0)
     
     print("\n" + "="*50)
